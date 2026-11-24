@@ -13,6 +13,9 @@ geocaching.db-journal
 # Downloaded GADM boundary files (large; re-fetch with fetch_boundaries.py)
 boundaries/
 
+# geocaching.com type icons (Groundspeak artwork; re-fetch with fetch_icons.py)
+icons/
+
 # Generated stats output
 output/
 

@@ -162,6 +162,19 @@ def county_geojson(counties):
     return {"type": "FeatureCollection", "features": features}
 
 
+def icon_data_uris(types):
+    """Map cache type -> data: URI of its locally downloaded icon (see fetch_icons.py)."""
+    import base64
+    from fetch_icons import icon_path
+
+    uris = {}
+    for t in types:
+        p = icon_path(t)
+        if p:
+            uris[t] = "data:image/gif;base64," + base64.b64encode(p.read_bytes()).decode("ascii")
+    return uris
+
+
 def h_table(headers, rows, cls=""):
     e = html.escape
     head = "".join(f"<th>{e(str(h))}</th>" for h in headers)
@@ -189,7 +202,12 @@ def render_html(s, finds):
                    + h_table(["Code", "Name", "Missing since PQ"],
                              [[r["code"], r["name"], r["missing_since"]] for r in s["deletion_attempted"]]) + "</section>")
     geo = json.dumps(county_geojson(s["counties"]))
-    points = json.dumps([[f["lat"], f["lon"], f"{f['code']} {f['name']}"] for f in finds])
+    icons = icon_data_uris({f["type"] for f in finds})
+    points = json.dumps([[f["lat"], f["lon"], f"{f['code']} {f['name']} ({f['type']})", f["type"]] for f in finds])
+    type_rows = "".join(
+        f'<tr><td>{f"<img class=ticon src={icons[r["type"]]} alt=>" if r["type"] in icons else ""}{e(r["type"])}</td>'
+        f'<td>{r["finds"]}</td></tr>' for r in s["finds_by_type"])
+    type_table = f"<table><thead><tr><th>Type</th><th>Finds</th></tr></thead><tbody>{type_rows}</tbody></table>"
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -211,6 +229,7 @@ td:last-child {{ text-align:right; }}
 .matrix .miss {{ background:var(--miss); }}
 #map {{ height:520px; border:1px solid var(--line); border-radius:8px; margin-top:8px; }}
 .wrap {{ overflow-x:auto; }}
+.ticon {{ width:20px; height:20px; vertical-align:middle; margin-right:8px; }}
 </style></head><body><main>
 <h1>Geocaching Stats</h1>
 <div class="kpis">
@@ -219,7 +238,7 @@ td:last-child {{ text-align:right; }}
  <div class="kpi"><b>{fd['km']} km</b><span>{fd['miles']} mi furthest in one day ({e(str(fd['date']))})<br>{e(str(fd['from']))} &rarr; {e(str(fd['to']))}</span></div>
  <div class="kpi"><b>{m['completed']}/{m['of']}</b><span>difficulty/terrain combinations</span></div>
 </div>
-<section><h2>Finds by cache type</h2>{h_table(["Type", "Finds"], [[r["type"], r["finds"]] for r in s["finds_by_type"]])}</section>
+<section><h2>Finds by cache type</h2>{type_table}</section>
 <section><h2>Counties</h2><div id="map"></div>
 <div class="wrap">{h_table(["Country", "County", "Finds"], [[r["country"], r["county"], r["finds"]] for r in s["counties"]])}</div></section>
 <section><h2>Difficulty / terrain matrix</h2><p>Rows are difficulty, columns terrain.</p><div class="wrap">{matrix}</div>{todo}</section>
@@ -228,16 +247,23 @@ td:last-child {{ text-align:right; }}
 <script>
 const counties = {geo};
 const finds = {points};
+const icons = {json.dumps(icons)};
 const map = L.map('map');
-L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{ maxZoom: 18,
-  attribution: '&copy; OpenStreetMap contributors; boundaries &copy; GADM; contains OS data &copy; Crown copyright and database right' }}).addTo(map);
+// OpenTopoMap basemap (OpenStreetMap's own tiles and CARTO both refuse pages opened from disk).
+L.tileLayer('https://{{s}}.tile.opentopomap.org/{{z}}/{{x}}/{{y}}.png', {{
+  maxZoom: 17, subdomains: 'abc',
+  attribution: 'Map data &copy; OpenStreetMap contributors, SRTM | style &copy; OpenTopoMap (CC-BY-SA); boundaries &copy; GADM; contains OS data &copy; Crown copyright and database right' }}).addTo(map);
+const leafletIcons = Object.fromEntries(Object.entries(icons).map(([t, uri]) =>
+  [t, L.icon({{ iconUrl: uri, iconSize: [20, 20], iconAnchor: [10, 10], tooltipAnchor: [10, 0] }})]));
 const layer = L.geoJSON(counties, {{ style: {{ color:'#2f7d3a', weight:1, fillColor:'#4caf50', fillOpacity:0.45 }},
   onEachFeature: (f, l) => l.bindTooltip(`${{f.properties.name}}, ${{f.properties.country}}: ${{f.properties.finds}} finds`) }});
 // The map needs a view before vector layers are added.
 const b = layer.getBounds();
 if (b.isValid()) map.fitBounds(b); else map.setView([52, -1], 6);
 layer.addTo(map);
-finds.forEach(([lat, lon, name]) => L.circleMarker([lat, lon], {{ radius:3, color:'#1b4d22', weight:1, fillOpacity:0.9 }}).bindTooltip(name).addTo(map));
+finds.forEach(([lat, lon, name, type]) => (leafletIcons[type]
+  ? L.marker([lat, lon], {{ icon: leafletIcons[type] }})
+  : L.circleMarker([lat, lon], {{ radius:4, color:'#1b4d22', weight:1, fillOpacity:0.9 }})).bindTooltip(name).addTo(map));
 </script></body></html>
 """
 
