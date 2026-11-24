@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local data (personal finds / logs; rebuildable from the PQ zips)
+geocaching.db
+geocaching.db-journal
+*.zip
+*.gpx
+
+# Downloaded GADM boundary files (large; re-fetch with fetch_boundaries.py)
+boundaries/
+
+# Generated stats output
+output/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
