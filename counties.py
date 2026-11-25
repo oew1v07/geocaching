@@ -7,6 +7,8 @@ from shapely.geometry import Point, shape
 from shapely.strtree import STRtree
 
 BOUNDARY_DIR = Path(__file__).with_name("boundaries")
+# Natural Earth 1:50m country outlines (public domain), used as the background of the HTML map.
+WORLD_FILE = BOUNDARY_DIR / "ne_50m_admin_0_countries.geojson"
 
 # geocaching.com country name -> ISO3 code used by GADM. Extend as needed.
 COUNTRY_ISO3 = {

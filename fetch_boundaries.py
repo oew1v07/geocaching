@@ -5,6 +5,7 @@
     Contains OS data (c) Crown copyright and database right; Open Government Licence v3.0.
   * Elsewhere: GADM 4.1, level 2 (counties / equivalents) where available, otherwise level 1.
     GADM data is free for non-commercial use: https://gadm.org/license.html
+  * Country outlines for the HTML map: Natural Earth 1:50m admin-0 countries (public domain).
 
 Files go in ./boundaries and are only downloaded once.
 
@@ -20,13 +21,26 @@ import zipfile
 
 from shapely.geometry import mapping, shape
 
-from counties import BOUNDARY_DIR, COUNTRY_ISO3, CUSTOM_SOURCES, assign_counties, boundary_file
+from counties import BOUNDARY_DIR, COUNTRY_ISO3, CUSTOM_SOURCES, WORLD_FILE, assign_counties, boundary_file
 from db import connect
 
 URL = "https://geodata.ucdavis.edu/gadm/gadm4.1/json/gadm41_{iso3}_{level}.json.zip"
 UK_LAYER = ("https://services-eu1.arcgis.com/T8qQXUocQr5Q2AWw/arcgis/rest/services/"
             "OS_Boundary_Supplementary_View/FeatureServer/1/query")
 UK_SIMPLIFY_DEG = 0.0001  # ~10 m; full-resolution polygons are ~1 MB each
+WORLD_URL = ("https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/"
+             "ne_50m_admin_0_countries.geojson")
+
+
+def download_world():
+    """Country outlines for the map background; keeps only the name to stay small."""
+    with urllib.request.urlopen(WORLD_URL, timeout=300) as resp:
+        fc = json.load(resp)
+    features = [{"type": "Feature", "properties": {"name": f["properties"].get("NAME")}, "geometry": f["geometry"]}
+                for f in fc["features"]]
+    BOUNDARY_DIR.mkdir(exist_ok=True)
+    WORLD_FILE.write_text(json.dumps({"type": "FeatureCollection", "features": features}), encoding="utf-8")
+    print(f"world: saved {len(features)} country outlines")
 
 
 def _get_json(url, params):
@@ -78,6 +92,8 @@ def main():
     ap.add_argument("--recompute", action="store_true", help="re-assign counties for all caches, not just unassigned")
     args = ap.parse_args()
     conn = connect()
+    if not WORLD_FILE.exists():
+        download_world()
     countries = [r[0] for r in conn.execute("SELECT DISTINCT country FROM caches WHERE country IS NOT NULL")]
     for country in countries:
         iso3 = COUNTRY_ISO3.get(country)

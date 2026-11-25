@@ -162,6 +162,21 @@ def county_geojson(counties):
     return {"type": "FeatureCollection", "features": features}
 
 
+def world_geojson():
+    """Simplified country outlines for the map background (see fetch_boundaries.py)."""
+    from shapely.geometry import mapping, shape
+    from counties import WORLD_FILE
+
+    if not WORLD_FILE.exists():
+        print("warning: no country outlines; run fetch_boundaries.py", file=sys.stderr)
+        return {"type": "FeatureCollection", "features": []}
+    fc = json.loads(WORLD_FILE.read_text(encoding="utf-8"))
+    return {"type": "FeatureCollection", "features": [
+        {"type": "Feature", "properties": f["properties"],
+         "geometry": mapping(shape(f["geometry"]).simplify(0.01, preserve_topology=True))}
+        for f in fc["features"]]}
+
+
 def icon_data_uris(types):
     """Map cache type -> data: URI of its locally downloaded icon (see fetch_icons.py)."""
     import base64
@@ -202,8 +217,8 @@ def render_html(s, finds):
                    + h_table(["Code", "Name", "Missing since PQ"],
                              [[r["code"], r["name"], r["missing_since"]] for r in s["deletion_attempted"]]) + "</section>")
     geo = json.dumps(county_geojson(s["counties"]))
+    world = json.dumps(world_geojson())
     icons = icon_data_uris({f["type"] for f in finds})
-    points = json.dumps([[f["lat"], f["lon"], f"{f['code']} {f['name']} ({f['type']})", f["type"]] for f in finds])
     type_rows = "".join(
         f'<tr><td>{f"<img class=ticon src={icons[r["type"]]} alt=>" if r["type"] in icons else ""}{e(r["type"])}</td>'
         f'<td>{r["finds"]}</td></tr>' for r in s["finds_by_type"])
@@ -215,8 +230,10 @@ def render_html(s, finds):
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
-:root {{ --bg:#fafaf7; --fg:#1d2a1f; --muted:#5f6b60; --line:#d9ddd3; --accent:#2f7d3a; --hit:#cfe8c9; --miss:#f3f3ef; }}
-@media (prefers-color-scheme: dark) {{ :root {{ --bg:#141914; --fg:#e6ebe3; --muted:#9aa597; --line:#2e372d; --accent:#7fc47f; --hit:#2f5a31; --miss:#1d231c; }} }}
+:root {{ --bg:#fafaf7; --fg:#1d2a1f; --muted:#5f6b60; --line:#d9ddd3; --accent:#2f7d3a; --hit:#cfe8c9; --miss:#f3f3ef;
+  --sea:#eef1ec; --land:#ffffff; --border:#9aa597; --county:#4caf50; --county-edge:#2f7d3a; --county-hover:#2f7d3a; }}
+@media (prefers-color-scheme: dark) {{ :root {{ --bg:#141914; --fg:#e6ebe3; --muted:#9aa597; --line:#2e372d; --accent:#7fc47f; --hit:#2f5a31; --miss:#1d231c;
+  --sea:#101410; --land:#1f261e; --border:#5f6b60; --county:#4f9a52; --county-edge:#7fc47f; --county-hover:#7fc47f; }} }}
 body {{ margin:0; background:var(--bg); color:var(--fg); font:15px/1.5 system-ui, sans-serif; }}
 main {{ max-width:960px; margin:0 auto; padding:24px 16px 64px; }}
 h1 {{ margin:0 0 4px; }} h2 {{ margin-top:40px; border-bottom:2px solid var(--accent); padding-bottom:4px; }}
@@ -227,7 +244,11 @@ table {{ border-collapse:collapse; margin-top:8px; }} th, td {{ border:1px solid
 td:last-child {{ text-align:right; }}
 .matrix td, .matrix th {{ text-align:center; min-width:32px; }} .matrix .hit {{ background:var(--hit); font-weight:600; }}
 .matrix .miss {{ background:var(--miss); }}
-#map {{ height:520px; border:1px solid var(--line); border-radius:8px; margin-top:8px; }}
+#map {{ height:520px; border:1px solid var(--line); border-radius:8px; margin-top:8px; background:var(--sea); }}
+#map path.country {{ fill:var(--land); fill-opacity:1; stroke:var(--border); stroke-width:0.8; }}
+#map path.county {{ fill:var(--county); fill-opacity:0.55; stroke:var(--county-edge); stroke-width:1; }}
+#map path.county.hover {{ fill:var(--county-hover); fill-opacity:0.85; stroke-width:2; }}
+#map .leaflet-control-attribution {{ background:var(--bg); color:var(--muted); opacity:0.9; }}
 .wrap {{ overflow-x:auto; }}
 .ticon {{ width:20px; height:20px; vertical-align:middle; margin-right:8px; }}
 </style></head><body><main>
@@ -245,25 +266,24 @@ td:last-child {{ text-align:right; }}
 {flagged}
 </main>
 <script>
+const world = {world};
 const counties = {geo};
-const finds = {points};
-const icons = {json.dumps(icons)};
-const map = L.map('map');
-// OpenTopoMap basemap (OpenStreetMap's own tiles and CARTO both refuse pages opened from disk).
-L.tileLayer('https://{{s}}.tile.opentopomap.org/{{z}}/{{x}}/{{y}}.png', {{
-  maxZoom: 17, subdomains: 'abc',
-  attribution: 'Map data &copy; OpenStreetMap contributors, SRTM | style &copy; OpenTopoMap (CC-BY-SA); boundaries &copy; GADM; contains OS data &copy; Crown copyright and database right' }}).addTo(map);
-const leafletIcons = Object.fromEntries(Object.entries(icons).map(([t, uri]) =>
-  [t, L.icon({{ iconUrl: uri, iconSize: [20, 20], iconAnchor: [10, 10], tooltipAnchor: [10, 0] }})]));
-const layer = L.geoJSON(counties, {{ style: {{ color:'#2f7d3a', weight:1, fillColor:'#4caf50', fillOpacity:0.45 }},
-  onEachFeature: (f, l) => l.bindTooltip(`${{f.properties.name}}, ${{f.properties.country}}: ${{f.properties.finds}} finds`) }});
+// No basemap: country outlines plus the counties cached in, coloured via CSS classes.
+const map = L.map('map', {{ zoomSnap: 0.25, attributionControl: true }});
+map.attributionControl.setPrefix(false);
+map.attributionControl.addAttribution('Countries: Natural Earth; counties &copy; GADM; contains OS data &copy; Crown copyright and database right');
+const countryLayer = L.geoJSON(world, {{ className: 'country', interactive: false }});
+const countyLayer = L.geoJSON(counties, {{ className: 'county',
+  onEachFeature: (f, l) => {{
+    l.bindTooltip(`<b>${{f.properties.name}}</b>, ${{f.properties.country}}<br>${{f.properties.finds}} find${{f.properties.finds === 1 ? '' : 's'}}`, {{ sticky: true }});
+    l.on('mouseover', () => {{ l.getElement().classList.add('hover'); l.bringToFront(); }});
+    l.on('mouseout', () => l.getElement().classList.remove('hover'));
+  }} }});
 // The map needs a view before vector layers are added.
-const b = layer.getBounds();
-if (b.isValid()) map.fitBounds(b); else map.setView([52, -1], 6);
-layer.addTo(map);
-finds.forEach(([lat, lon, name, type]) => (leafletIcons[type]
-  ? L.marker([lat, lon], {{ icon: leafletIcons[type] }})
-  : L.circleMarker([lat, lon], {{ radius:4, color:'#1b4d22', weight:1, fillOpacity:0.9 }})).bindTooltip(name).addTo(map));
+const b = countyLayer.getBounds();
+if (b.isValid()) map.fitBounds(b, {{ padding: [20, 20] }}); else map.setView([52, -1], 6);
+countryLayer.addTo(map);
+countyLayer.addTo(map);
 </script></body></html>
 """
 
